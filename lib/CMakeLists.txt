@@ -1,3 +1,5 @@
 add_library(clp clp.c)
 add_library(profiler SystemProfiler.cc)
 add_library(barrier barrier.cc)
+add_library(platform_features PlatformFeatures.cc ../third-party/rpmalloc/rpmalloc/rpmalloc.c)
+target_link_libraries(platform_features numa)

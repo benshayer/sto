@@ -2,7 +2,7 @@ add_library(db_index DB_index.cc DB_index.hh)
 
 set(COMMON_HEADERS ../lib/sampling.hh)
 
-add_executable(tpcc_bench TPCC_bench.cc TPCC_structs.hh DB_structs.hh DB_params.hh DB_profiler.hh tpcc_d.cc tpcc_dc.cc tpcc_dn.cc tpcc_dcn.cc tpcc_m.cc tpcc_mc.cc tpcc_mn.cc tpcc_mcn.cc tpcc_o.cc tpcc_oc.cc ${COMMON_HEADERS})
+add_executable(tpcc_bench TPCC_bench.cc TPCC_structs.hh DB_structs.hh DB_params.hh DB_profiler.hh tpcc_d.cc tpcc_dc.cc tpcc_dn.cc tpcc_dcn.cc tpcc_m.cc tpcc_mc.cc tpcc_mn.cc tpcc_mcn.cc tpcc_o.cc tpcc_oc.cc tpcc_s.cc tpcc_tcn.cc tpcc_tc.cc tpcc_tn.cc tpcc_t.cc ${COMMON_HEADERS})
 add_executable(ycsb_bench YCSB_bench.cc YCSB_structs.hh DB_structs.hh DB_params.hh DB_profiler.hh ${COMMON_HEADERS})
 add_executable(ht_bench HT_bench.cc HT_structs.hh DB_structs.hh DB_params.hh DB_profiler.hh ${COMMON_HEADERS})
 add_executable(micro_bench MicroBenchmarks.cc Micro_structs.hh ${COMMON_HEADERS})
@@ -11,7 +11,7 @@ add_executable(wiki_bench Wikipedia_bench.cc Wikipedia_data.cc Wikipedia_bench.h
 add_executable(voter_bench Voter_txns.hh Voter_structs.hh Voter_bench.hh Voter_bench.cc Voter_data.cc ${COMMON_HEADERS})
 add_executable(rubis_bench Rubis_bench.cc Rubis_bench.hh Rubis_structs.hh Rubis_txns.hh Rubis_commutators.hh Rubis_selectors.hh ${COMMON_HEADERS})
 
-target_link_libraries(tpcc_bench db_index sto clp profiler barrier masstree json dprint xxhash ${PLATFORM_LIBRARIES})
+target_link_libraries(tpcc_bench db_index sto clp profiler barrier masstree json dprint xxhash platform_features ${PLATFORM_LIBRARIES})
 target_link_libraries(ycsb_bench db_index sto clp profiler barrier masstree json dprint xxhash ${PLATFORM_LIBRARIES})
 target_link_libraries(ht_bench db_index sto clp profiler barrier masstree json dprint xxhash ${PLATFORM_LIBRARIES})
 target_link_libraries(micro_bench db_index sto clp profiler barrier masstree json dprint ${PLATFORM_LIBRARIES})
