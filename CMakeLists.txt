@@ -24,5 +24,6 @@ add_subdirectory(datatype)
 
 add_subdirectory(benchmark)
 add_subdirectory(test)
+add_subdirectory(cuckoo_trie)
 
 add_library(rd srandomdev.c)

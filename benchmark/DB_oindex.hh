@@ -1,6 +1,10 @@
 #pragma once
 
+#include <map>
 #include "DB_index.hh"
+#include "../cuckoo_trie/src/cuckoo_trie.h"
+#include "../cuckoo_trie/src/main.h"
+
 
 namespace bench {
 template <typename K, typename V, typename DBParams>
@@ -1539,4 +1543,677 @@ public:
 template <typename K, typename V, typename DBParams>
 __thread typename mvcc_ordered_index<K, V, DBParams>::table_params::threadinfo_type* mvcc_ordered_index<K, V, DBParams>::ti;
 
+
+template<typename K, typename V, typename DBParams>
+class ct_oindex : public TObject {
+public:
+    typedef K key_type;
+    typedef V value_type;
+    typedef commutators::Commutator<value_type> comm_type;
+
+    //typedef typename get_occ_version<DBParams>::type occ_version_type;
+    typedef typename bench::get_version<DBParams>::type version_type;
+
+
+    static constexpr typename version_type::type invalid_bit = TransactionTid::user_bit;
+    static constexpr TransItem::flags_type insert_bit = TransItem::user0_bit;
+    static constexpr TransItem::flags_type delete_bit = TransItem::user0_bit << 1u;
+    static constexpr TransItem::flags_type row_update_bit = TransItem::user0_bit << 2u;
+    static constexpr TransItem::flags_type row_cell_bit = TransItem::user0_bit << 3u;
+    static constexpr uintptr_t internode_bit = 1;
+    // TicToc node version bit
+    static constexpr uintptr_t ttnv_bit = 1 << 1u;
+
+    typedef typename value_type::NamedColumn NamedColumn;
+    typedef IndexValueContainer<V, version_type> value_container_type;
+
+    static constexpr bool value_is_small = is_small<V>::value;
+
+    static constexpr bool index_read_my_write = DBParams::RdMyWr;
+
+    struct internal_elem {
+        key_type key;
+        value_container_type row_container;
+        /*
+        ct_kv* ctkv;
+        uint8_t* ctkv_value_bytes;
+         */
+        bool deleted;
+
+        internal_elem(const key_type &k, const value_type &v, bool valid)
+                : key(k),
+                  row_container((valid ? Sto::initialized_tid() : (Sto::initialized_tid() | invalid_bit)),
+                                !valid, v),
+                  deleted(false){
+            /*
+#ifdef __cplusplus \
+extern "C" {
+# endif
+            ctkv = (ct_kv*)malloc(kv_required_size(sizeof(key_type), sizeof(value_type)));
+            kv_init(ctkv, sizeof ( key_type ) , sizeof (value_type)) ;
+            ctkv_value_bytes = kv_value_bytes(ctkv);
+#ifdef __cplusplus \
+}
+# endif
+            std::memcpy(ctkv->bytes,&k, sizeof(key_type));
+            std::memcpy(ctkv_value_bytes,&v, sizeof(value_type));
+             */
+        }
+
+        version_type &version() {
+            return row_container.row_version();
+        }
+
+        bool valid() {
+            return !(version().value() & invalid_bit);
+        }
+    };
+
+    struct table_params : public Masstree::nodeparams<15, 15> {
+        typedef internal_elem *value_type;
+        typedef Masstree::value_print<value_type> value_print_type;
+        typedef threadinfo threadinfo_type;
+
+        static constexpr bool track_nodes = (DBParams::NodeTrack && DBParams::TicToc);
+        typedef std::conditional_t<track_nodes, version_type, int> aux_tracker_type;
+    };
+
+    typedef Masstree::Str Str;
+    typedef Masstree::unlocked_tcursor<table_params> unlocked_cursor_type;
+
+    static constexpr bool track_nodes = (DBParams::NodeTrack && DBParams::TicToc);
+    typedef std::conditional_t<track_nodes, TicTocVersion<>, TVersion> version_node_type;
+
+    typedef std::shared_ptr<cuckoo_trie> cuckoo_table;
+    using const_iterator = ct_iter*;
+    typedef ct_kv* node_type;
+
+    using column_access_t = typename bench::split_version_helpers<ct_oindex<K, V, DBParams>>::column_access_t;
+    using item_key_t = typename bench::split_version_helpers<ct_oindex<K, V, DBParams>>::item_key_t;
+
+    template<typename T>
+    static constexpr auto column_to_cell_accesses
+            = bench::split_version_helpers<ct_oindex<K, V, DBParams>>::template column_to_cell_accesses<T>;
+    template<typename T>
+    static constexpr auto extract_item_list
+            = bench::split_version_helpers<ct_oindex<K, V, DBParams>>::template extract_item_list<T>;
+
+    typedef std::tuple<bool, bool, uintptr_t, const value_type *> sel_return_type;
+    typedef std::tuple<bool, bool> ins_return_type;
+    typedef std::tuple<bool, bool> del_return_type;
+
+    static __thread typename table_params::threadinfo_type *ti;
+
+    ct_oindex(size_t init_size)
+    {
+        this->table_init();
+        (void) init_size;
+    }
+    ct_oindex()
+    {
+        this->table_init();
+    }
+    void table_init() {
+        ctIndex = std::make_shared<cuckoo_trie>(ct_alloc(256));
+        if (ti == nullptr)
+            ti = threadinfo::make(threadinfo::TI_MAIN, -1);
+        key_gen_ = 0;
+    }
+    static void thread_init() {
+        if (ti == nullptr)
+            ti = threadinfo::make(threadinfo::TI_PROCESS, TThread::id());
+        Transaction::tinfo[TThread::id()].trans_start_callback = []() {
+            ti->rcu_start();
+        };
+        Transaction::tinfo[TThread::id()].trans_end_callback = []() {
+            ti->rcu_stop();
+        };
+    }
+    uint64_t gen_key() {
+        return fetch_and_add(&key_gen_, 1);
+    }
+    sel_return_type
+    select_row(const key_type &key, bench::RowAccess acc) {
+#ifdef __cplusplus \
+extern "C" {
+#endif
+        ct_kv* result = ct_lookup(ctIndex, sizeof(key_type), std::reinterpret_pointer_cast<uint8_t>(key));
+#ifdef __cplusplus \
+}
+#endif
+        if (result) {
+#ifdef __cplusplus \
+extern "C" {
+#endif
+            uint8_t* value_res = kv_value_bytes(result);
+#ifdef __cplusplus \
+}
+#endif
+            value_type v;
+            std::memcpy(&v,value_res,sizeof(value_type));
+            internal_elem* e(key,v,true);
+            e->ctkv = result;
+            return select_row(reinterpret_cast<uintptr_t>(e), acc);
+        }
+        return sel_return_type(true, false, 0, nullptr);
+    }
+
+    sel_return_type
+    select_row(const key_type &key, std::initializer_list<column_access_t> accesses) {
+#ifdef __cplusplus \
+extern "C" {
+#endif
+        ct_kv* result = ct_lookup(ctIndex, sizeof(key_type), std::reinterpret_pointer_cast<uint8_t>(key));
+#ifdef __cplusplus \
+}
+#endif
+        if (result) {
+#ifdef __cplusplus \
+extern "C" {
+#endif
+            uint8_t* value_res = kv_value_bytes(result);
+#ifdef __cplusplus \
+}
+#endif
+            value_type v;
+            std::memcpy(&v,value_res,sizeof(value_type));
+            internal_elem* e(key,v,true);
+            e->ctkv = result;
+            return select_row(reinterpret_cast<uintptr_t>(e), accesses);
+        }
+        return sel_return_type(true, false, 0, nullptr);
+    }
+
+    sel_return_type
+    select_row(uintptr_t rid, bench::RowAccess access) {
+        auto e = reinterpret_cast<internal_elem *>(rid);
+        bool ok = true;
+        TransProxy row_item = Sto::item(this, item_key_t::row_item_key(e));
+
+        if (is_phantom(e, row_item))
+            goto abort;
+
+        if (index_read_my_write) {
+            if (has_delete(row_item)) {
+                return sel_return_type(true, false, 0, nullptr);
+            }
+            if (has_row_update(row_item)) {
+                value_type *vptr;
+                if (has_insert(row_item))
+                    vptr = &e->row_container.row;
+                else
+                    vptr = row_item.template raw_write_value<value_type *>();
+                return sel_return_type(true, true, rid, vptr);
+            }
+        }
+
+        switch (access) {
+            case bench::RowAccess::UpdateValue:
+                ok = bench::version_adapter::select_for_update(row_item, e->version());
+                row_item.add_flags(row_update_bit);
+                break;
+            case bench::RowAccess::ObserveExists:
+            case bench::RowAccess::ObserveValue:
+                ok = row_item.observe(e->version());
+                break;
+            default:
+                break;
+        }
+
+        if (!ok)
+            goto abort;
+
+        return sel_return_type(true, true, rid, &(e->row_container.row));
+
+        abort:
+        return sel_return_type(false, false, 0, nullptr);
+    }
+
+
+    sel_return_type
+    select_row(uintptr_t rid, std::initializer_list<column_access_t> accesses) {
+        auto e = reinterpret_cast<internal_elem *>(rid);
+        TransProxy row_item = Sto::item(this, item_key_t::row_item_key(e));
+
+        // Translate from column accesses to cell accesses
+        // all buffered writes are only stored in the wdata_ of the row item (to avoid redundant copies)
+        auto cell_accesses = column_to_cell_accesses<value_container_type>(accesses);
+
+        std::array<TransItem *, value_container_type::num_versions> cell_items{};
+        bool any_has_write;
+        bool ok;
+        std::tie(any_has_write, cell_items) = extract_item_list<value_container_type>(cell_accesses, this, e);
+
+        if (is_phantom(e, row_item))
+            goto abort;
+
+        if (index_read_my_write) {
+            if (has_delete(row_item)) {
+                return sel_return_type(true, false, 0, nullptr);
+            }
+            if (any_has_write || has_row_update(row_item)) {
+                value_type *vptr;
+                if (has_insert(row_item))
+                    vptr = &e->row_container.row;
+                else
+                    vptr = row_item.template raw_write_value<value_type *>();
+                return sel_return_type(true, true, rid, vptr);
+            }
+        }
+
+        ok = access_all(cell_accesses, cell_items, e->row_container);
+        if (!ok)
+            goto abort;
+
+        return sel_return_type(true, true, rid, &(e->row_container.row));
+
+        abort:
+        return sel_return_type(false, false, 0, nullptr);
+    }
+
+
+    void update_row(uintptr_t rid, value_type *new_row) {
+        auto e = reinterpret_cast<internal_elem *>(rid);
+        auto row_item = Sto::item(this, item_key_t::row_item_key(e));
+        if (value_is_small) {
+            row_item.acquire_write(e->version(), *new_row);
+        } else {
+            row_item.acquire_write(e->version(), new_row);
+        }
+    }
+
+    void update_row(uintptr_t rid, const comm_type &comm) {
+        assert(&comm);
+        auto row_item = Sto::item(this, item_key_t::row_item_key(reinterpret_cast<internal_elem *>(rid)));
+        row_item.add_commute(comm);
+    }
+
+    ins_return_type
+    insert_row(const key_type &key, value_type *vptr, bool overwrite = false) {
+        auto elemToInsert = new internal_elem(key, vptr ? *vptr : value_type(),
+                                              false /*!valid*/);
+
+        internal_elem* oldElem;
+        int inserted;
+        ct_kv* ctkv_insert;
+        uint8_t* ctkv_value_bytes;
+        cuckoo_trie* ctPointer = ctIndex.get();
+
+# ifdef __cplusplus \
+extern "C" {
+# endif
+        ctkv_insert = (ct_kv*)malloc(kv_required_size(sizeof(key_type), sizeof(value_type)));
+        kv_init(ctkv_insert, sizeof ( key_type ) , sizeof (value_type)) ;
+        ctkv_value_bytes = kv_value_bytes(ctkv_insert);
+# ifdef __cplusplus \
+}
+# endif
+        std::memcpy(ctkv_insert->bytes,&key, sizeof(key_type));
+        std::memcpy(ctkv_value_bytes,vptr, sizeof(value_type));
+
+
+
+        inserted = ct_insert(ctPointer , ctkv_insert);
+
+//        Used only to make the function more readable
+        bool alreadyIn = inserted == S_ALREADYIN;
+
+        if (alreadyIn) {
+            // NB: the insert method only manipulates the row_item. It is possible
+            // this insert is overwriting some previous updates on selected columns
+            // The expected behavior is that this row-level operation should overwrite
+            // all changes made by previous updates (in the same transaction) on this
+            // row. We achieve this by granting this row_item a higher priority.
+            // During the install phase, if we notice that the row item has already
+            // been locked then we simply ignore installing any changes made by cell items.
+            // It should be trivial for a cell item to find the corresponding row item
+            // and figure out if the row-level version is locked.
+            internal_elem* e = oldElem;
+
+            TransProxy row_item = Sto::item(this, item_key_t::row_item_key(e));
+
+            if (is_phantom(e, row_item))
+                goto abort;
+
+            if (index_read_my_write) {
+                if (has_delete(row_item)) {
+                    auto proxy = row_item.clear_flags(delete_bit).clear_write();
+
+                    if (value_is_small)
+                        proxy.add_write(*vptr);
+                    else
+                        proxy.add_write(vptr);
+
+                    return ins_return_type(true, false);
+                }
+            }
+
+            if (overwrite) {
+                bool ok;
+                if (value_is_small)
+                    ok = bench::version_adapter::select_for_overwrite(row_item, e->version(), *vptr);
+                else
+                    ok = bench::version_adapter::select_for_overwrite(row_item, e->version(), vptr);
+                if (!ok)
+                    goto abort;
+                if (index_read_my_write) {
+                    if (has_insert(row_item)) {
+                        copy_row(e, vptr);
+                    }
+                }
+            } else {
+                // observes that the row exists, but nothing more
+                if (!row_item.observe(e->version()))
+                    goto abort;
+            }
+        }
+        else {
+            TransProxy row_item = Sto::item(this, item_key_t::row_item_key(elemToInsert));
+            row_item.acquire_write(elemToInsert->version());
+            row_item.add_flags(insert_bit);
+        }
+        return ins_return_type(true, reinterpret_cast<bool>(alreadyIn));
+
+        abort:
+        delete elemToInsert;
+        return ins_return_type(false, false);
+    }
+
+    template<typename Callback, bool Reverse>
+    bool range_scan(const key_type &begin, const key_type &end, Callback callback,
+                    std::initializer_list<column_access_t> accesses, bool phantom_protection = true,
+                    int limit = -1) {
+//        THIS IS THE FIRST ONE
+        assert((limit == -1) || (limit > 0));
+        cuckoo_trie* ctPointer = ctIndex.get();
+        //const_iterator iter = hotIndex->find(val.mIsValid ? begin : val.mValue->key);
+# ifdef __cplusplus \
+extern "C" {
+# endif
+        ct_kv ct_begin, ct_end;
+        kv_init (&ct_begin, sizeof(key_type),sizeof(value_type));
+        ct_begin.bytes = &begin;
+        kv_init (&ct_end, sizeof(key_type),sizeof(value_type));
+        ct_end.bytes = &end;
+        const_iterator iter = ct_iter_alloc(ctPointer);
+        ct_iter_goto(iter,sizeof(key_type),(uint8_t*)(begin));
+# ifdef __cplusplus \
+}
+# endif
+        auto cell_accesses = column_to_cell_accesses<value_container_type>(accesses);
+        auto value_callback = [&](key_type &key, internal_elem *e, bool &ret, bool &count) {
+            TransProxy row_item = index_read_my_write ? Sto::item(this, item_key_t::row_item_key(e))
+                                                      : Sto::fresh_item(this, item_key_t::row_item_key(e));
+
+            bool any_has_write;
+            std::array<TransItem *, value_container_type::num_versions> cell_items{};
+            std::tie(any_has_write, cell_items) = extract_item_list<value_container_type>(cell_accesses, this, e);
+
+            if (index_read_my_write) {
+                if (has_delete(row_item)) {
+                    ret = true;
+                    count = false;
+                    return true;
+                }
+                if (any_has_write) {
+                    if (has_insert(row_item))
+                        ret = callback(key_type(key), e->row_container.row);
+                    else
+                        ret = callback(key_type(key), *(row_item.template raw_write_value<value_type *>()));
+                    return true;
+                }
+            }
+
+            bool ok = access_all(cell_accesses, cell_items, e->row_container);
+            if (!ok)
+                return false;
+
+            // skip invalid (inserted but yet committed) values, but do not abort
+            if (!e->valid()) {
+                ret = true;
+                count = false;
+                return true;
+            }
+
+            ret = callback(key_type(key), e->row_container.row);
+            return true;
+        };
+
+        int scanCount=0;
+        ct_kv* current_kv = NULL;
+        key_type currentKey = NULL;
+        while(!iter->is_exhausted && !currentKey == end) {
+            /*
+            bool count = true;
+            bool visited = false;
+            internal_elem* e = *(iter);
+            key_type& currentKey = e->key;
+
+//          Since there is no remove in HotTrie
+            if (e->deleted) {++iter;continue;}
+
+            if ((Reverse && (memcmp(&end, &(*iter)->key, sizeof(end)) >= 0)) ||
+                (!Reverse && (memcmp(&end, &(*iter)->key, sizeof(end)) <= 0))) {
+                break;
+            }
+
+            if(!value_callback(currentKey, e, visited, count)) {
+                if (count) {++scanCount;}
+                return false;
+            }else {
+                if(count) {++scanCount;}
+                if(!visited) {return false;}
+                if(scanCount >= limit && limit > 0) {break;}
+            }
+            */
+# ifdef __cplusplus \
+extern "C" {
+#endif
+            ct_kv *current = ct_iter_next(iter);
+# ifdef __cplusplus \
+}
+#endif
+            memcpy(&currentKey,current->bytes, sizeof(key_type));
+            ++scanCount;
+            if(scanCount >= limit && limit > 0) {break;}
+        }
+        return true;
+    }
+
+
+    // TObject interface methods
+    bool lock(TransItem &item, Transaction &txn) override {
+        assert(!is_internode(item));
+        /*
+        if constexpr (table_params::track_nodes) {
+            if (is_ttnv(item)) {
+                auto n = get_internode_address(item);
+                return txn.try_lock(item, n->ticTocVersion);
+            }
+        }
+         */
+        auto key = item.key<item_key_t>();
+        auto e = key.internal_elem_ptr();
+        if (key.is_row_item())
+            return txn.try_lock(item, e->version());
+        else
+            return txn.try_lock(item, e->row_container.version_at(key.cell_num()));
+    }
+
+    bool check(TransItem &item, Transaction &txn) override {
+        /*
+        if constexpr (table_params::track_nodes) {
+            if (is_ttnv(item)) {
+                auto n = get_internode_address(item);
+                return n->ticTocVersion.cp_check_version(txn, item);
+            }
+        }
+         */
+        auto key = item.key<item_key_t>();
+        auto e = key.internal_elem_ptr();
+        if (key.is_row_item())
+            return e->version().cp_check_version(txn, item);
+        else
+            return e->row_container.version_at(key.cell_num()).cp_check_version(txn, item);
+    }
+
+    void install(TransItem &item, Transaction &txn) override {
+        assert(!is_internode(item));
+/*
+        if constexpr (table_params::track_nodes) {
+            if (is_ttnv(item)) {
+                auto n = get_internode_address(item);
+                n->ticTocVersion.cp_set_version_unlock(n->ticTocVersion.v_);
+                return;
+            }
+        }
+*/
+        auto key = item.key<item_key_t>();
+        auto e = key.internal_elem_ptr();
+
+        if (key.is_row_item()) {
+            if (has_delete(item)) {
+                assert(e->valid() && !e->deleted);
+                e->deleted = true;
+                txn.set_version(e->version());
+                return;
+            }
+
+            if (!has_insert(item)) {
+                if (item.has_commute()) {
+                    comm_type &comm = item.write_value<comm_type>();
+                    if (has_row_update(item)) {
+                        copy_row(e, comm);
+                    } else if (has_row_cell(item)) {
+                        e->row_container.install_cell(comm);
+                    }
+                } else {
+                    value_type *vptr;
+                    if (value_is_small) {
+                        vptr = &(item.write_value<value_type>());
+                    } else {
+                        vptr = item.write_value<value_type *>();
+                    }
+
+                    if (has_row_update(item)) {
+                        if (value_is_small) {
+                            e->row_container.row = *vptr;
+                        } else {
+                            copy_row(e, vptr);
+                        }
+                    } else if (has_row_cell(item)) {
+                        // install only the difference part
+                        // not sure if works when there are more than 1 minor version fields
+                        // should still work
+                        e->row_container.install_cell(0, vptr);
+                    }
+                }
+            }
+            txn.set_version_unlock(e->version(), item);
+        } else {
+            // skip installation if row-level update is present
+            auto row_item = Sto::item(this, item_key_t::row_item_key(e));
+            if (!has_row_update(row_item)) {
+                if (row_item.has_commute()) {
+                    comm_type &comm = row_item.template write_value<comm_type>();
+                    assert(&comm);
+                    e->row_container.install_cell(comm);
+                } else {
+                    value_type *vptr;
+                    if (value_is_small)
+                        vptr = &(row_item.template raw_write_value<value_type>());
+                    else
+                        vptr = row_item.template raw_write_value<value_type *>();
+
+                    e->row_container.install_cell(key.cell_num(), vptr);
+                }
+            }
+
+            txn.set_version_unlock(e->row_container.version_at(key.cell_num()), item);
+        }
+    }
+
+    void unlock(TransItem &item) override {
+        assert(!is_internode(item));
+/*
+        if constexpr (table_params::track_nodes) {
+            if (is_ttnv(item)) {
+                auto n = get_internode_address(item);
+                n->ticTocVersion.cp_unlock(item);
+                return;
+            }
+        }
+        */
+        auto key = item.key<item_key_t>();
+        auto e = key.internal_elem_ptr();
+        if (key.is_row_item())
+            e->version().cp_unlock(item);
+        else
+            e->row_container.version_at(key.cell_num()).cp_unlock(item);
+    }
+
+    void cleanup(TransItem &item, bool committed) override {
+        if (committed ? has_delete(item) : has_insert(item)) {
+            auto key = item.key<item_key_t>();
+            assert(key.is_row_item());
+            internal_elem *e = key.internal_elem_ptr();
+            bool ok = _remove(e->key);
+            if (!ok) {
+                std::cout << committed << "," << has_delete(item) << "," << has_insert(item) << std::endl;
+                always_assert(false, "insert-bit exclusive ownership violated");
+            }
+            item.clear_needs_unlock();
+        }
+    }
+
+
+private:
+    uint64_t key_gen_;
+    cuckoo_table ctIndex;
+
+    std::map<key_type, value_type> backupMap;
+
+
+
+    static bool has_insert(const TransItem &item) {
+        return (item.flags() & insert_bit) != 0;
+    }
+
+    static bool has_delete(const TransItem &item) {
+        return (item.flags() & delete_bit) != 0;
+    }
+
+    static bool has_row_update(const TransItem &item) {
+        return (item.flags() & row_update_bit) != 0;
+    }
+
+    static bool has_row_cell(const TransItem &item) {
+        return (item.flags() & row_cell_bit) != 0;
+    }
+
+    static bool is_phantom(internal_elem *e, const TransItem &item) {
+        return (!e->valid() && !has_insert(item));
+    }
+
+    static bool is_internode(TransItem &item) {
+        return (item.key<uintptr_t>() & internode_bit) != 0;
+    }
+
+    static node_type *get_internode_address(TransItem &item) {
+        if (is_internode(item)) {
+            return reinterpret_cast<node_type *>(item.key<uintptr_t>() & ~internode_bit);
+        } else if (is_ttnv(item)) {
+            return reinterpret_cast<node_type *>(item.key<uintptr_t>() & ~ttnv_bit);
+        }
+        assert(false);
+        return nullptr;
+    }
+
+    static bool is_ttnv(TransItem &item) {
+        return (item.key<uintptr_t>() & ttnv_bit);
+    }
+
+
+
+};
 } // namespace bench

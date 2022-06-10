@@ -1,7 +1,6 @@
 #pragma once
 #include "config.h"
 #include "compiler.hh"
-
 #include "Sto.hh"
 
 #include "masstree.hh"

@@ -308,7 +308,7 @@ static inline ct_kv* entry_kv(ct_entry* entry) {
 	uintptr_t result = get_bits_uint128(entry_val, offsetof(ct_entry, key) * 8, sizeof(ct_small_pointer) * 8);
 	if (result & 0x800000000000ULL)
 		result |= 0xFFFF000000000000ULL;
-	return (void*)result;
+	return (ct_kv*)result;
 }
 
 static inline void entry_set_kv(ct_entry* entry, ct_kv* kv) {
