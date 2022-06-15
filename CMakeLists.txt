@@ -2,12 +2,17 @@ cmake_minimum_required(VERSION 3.8)
 project(sto)
 
 set(CMAKE_CXX_STANDARD 17)
+
+SET(CMAKE_CXX_FLAGS "-std=c++14 -march=native -mavx -mavx2 -mbmi2 -mlzcnt -Wno-deprecated-declarations -Wall -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free -faligned-new")
+SET(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
+
 if(APPLE)
     set(PLATFORM_LIBRARIES pthread m)
 else()
     set(PLATFORM_LIBRARIES pthread m jemalloc)
 endif()
 
+include_directories(cuckoo_trie)
 include_directories(masstree-beta)
 include_directories(third-party)
 include_directories(third-party/xxHash)

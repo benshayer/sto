@@ -144,7 +144,7 @@ struct cuckoo_trie {
 	uint64_t num_pairs;
 	uint64_t num_shuffle_blocks;
 	uint64_t bucket_mix_table[1 << TAG_BITS];
-	int is_empty;
+	uint32_t is_empty;
 };
 
 static inline ct_entry_storage* trie_min_leaf(cuckoo_trie* trie) {

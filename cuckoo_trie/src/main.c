@@ -4,7 +4,8 @@
 #include <stddef.h>
 #include <sys/mman.h>
 #include <stdio.h>
-
+#include <x86intrin.h>
+#pragma GCC target ("bmi2,tune=skylake")
 #include "cuckoo_trie.h"
 #include "random.h"
 #include "main.h"
@@ -461,10 +462,9 @@ void update_entry(cuckoo_trie* trie, ct_entry_local_copy* local_copy, ct_entry* 
 }
 
 void remove_entry_by_address(ct_lock_mgr* lock_mgr, ct_entry_storage* entry_pos) {
-	const ct_entry unused_entry = {
-		.parent_color_and_flags = (INVALID_COLOR << PARENT_COLOR_SHIFT) | TYPE_UNUSED,
-		.color_and_tag = INVALID_COLOR << TAG_BITS
-	};
+	ct_entry unused_entry;
+		unused_entry.parent_color_and_flags = (INVALID_COLOR << PARENT_COLOR_SHIFT) | TYPE_UNUSED;
+		unused_entry.color_and_tag = INVALID_COLOR << TAG_BITS;
 
 #ifdef NDEBUG
 	UNUSED_PARAMETER(lock_mgr);
@@ -1236,7 +1236,7 @@ int split_leaf(ct_finger* finger, ct_kv* kv, int is_maximal, ct_pred_locator* pr
 	ct_kv* existing_kv = entry_kv(&(finger->containing_entry.value));
 	ct_entry* cur_jump_node = NULL;
 	ct_entry_locator original_leaf_next = finger->containing_entry.value.next_leaf;
-
+    ct_entry* bitmap_node = NULL;
 	// Take all required locks
 
 	if (finger->last_path_entry > finger->path) {
@@ -1312,7 +1312,7 @@ int split_leaf(ct_finger* finger, ct_kv* kv, int is_maximal, ct_pred_locator* pr
 	}
 
 	// Add the bitmap node at the end of the local path buffer
-	ct_entry* bitmap_node = &(path_nodes[num_path_nodes]);
+	bitmap_node = &(path_nodes[num_path_nodes]);
 	path_prefix_hashes[num_path_nodes] = prefix_hash;
 	num_path_nodes++;
 	bitmap_node->parent_color_and_flags = (INVALID_COLOR << PARENT_COLOR_SHIFT) | TYPE_BITMAP;
@@ -2086,7 +2086,7 @@ int ct_iter_goto_internal(ct_iter* iter, uint64_t key_size, uint8_t* key_bytes) 
 	return SI_OK;
 }
 
-inline ct_entry_local_copy* iter_max_leaf(ct_iter* iter) {
+ct_entry_local_copy* iter_max_leaf(ct_iter* iter) {
 	return &(iter->leaves[NUM_LINKED_LISTS - 1]);
 }
 
@@ -2200,7 +2200,7 @@ ct_kv* ct_iter_next(ct_iter* iter) {
 }
 
 ct_iter* ct_iter_alloc(cuckoo_trie* trie) {
-	ct_iter* result = malloc(sizeof(ct_iter));
+	ct_iter* result = (ct_iter*)malloc(sizeof(ct_iter));
 
 	result->trie = trie;
 	return result;
@@ -2241,11 +2241,11 @@ cuckoo_trie* ct_alloc(uint64_t num_cells) {
 	buckets_to_alloc = num_buckets + 1;  // Add space for the min_leaf bucket
 
 	uint64_t buckets_pages = (buckets_to_alloc * sizeof(ct_bucket)) / HUGEPAGE_SIZE + 1;
-	ct_bucket* buckets = mmap_hugepage(buckets_pages * HUGEPAGE_SIZE);
+	ct_bucket* buckets = (ct_bucket*)mmap_hugepage(buckets_pages * HUGEPAGE_SIZE);
 	if (!buckets)
 		return NULL;
 
-	cuckoo_trie* result = malloc(sizeof(cuckoo_trie));
+	cuckoo_trie* result = (cuckoo_trie*)malloc(sizeof(cuckoo_trie));
 	if (!result) {
 		munmap(buckets, buckets_pages * HUGEPAGE_SIZE);
 		return NULL;

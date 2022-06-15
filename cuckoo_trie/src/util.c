@@ -6,6 +6,9 @@
 #include <stdarg.h>
 #include <stdlib.h>
 
+#include <x86intrin.h>
+#pragma GCC target ("bmi,tune=skylake")
+
 #include "util.h"
 #include "compiler.h"
 #include "cuckoo_trie_internal.h"

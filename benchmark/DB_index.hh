@@ -11,6 +11,13 @@
 #include "masstree_remove.hh"
 #include "masstree_scan.hh"
 #include "string.hh"
+#ifdef __cplusplus \
+extern "C" {
+#endif
+#include "../cuckoo_trie/src/cuckoo_trie.h"
+#ifdef __cplusplus \
+}
+#endif
 
 #include <vector>
 #include "DB_structs.hh"

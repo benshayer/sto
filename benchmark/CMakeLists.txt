@@ -1,7 +1,7 @@
 add_library(db_index DB_index.cc DB_index.hh)
-include_directories(../cuckoo_trie)
 set(COMMON_HEADERS ../lib/sampling.hh)
 
+target_link_libraries(db_index cuckoo_trie)
 add_executable(tpcc_bench TPCC_bench.cc TPCC_structs.hh DB_structs.hh DB_params.hh DB_profiler.hh tpcc_d.cc tpcc_dc.cc tpcc_dn.cc tpcc_dcn.cc tpcc_m.cc tpcc_mc.cc tpcc_mn.cc tpcc_mcn.cc tpcc_o.cc tpcc_oc.cc tpcc_s.cc tpcc_tcn.cc tpcc_tc.cc tpcc_tn.cc tpcc_t.cc ${COMMON_HEADERS})
 add_executable(ycsb_bench YCSB_bench.cc YCSB_structs.hh DB_structs.hh DB_params.hh DB_profiler.hh ${COMMON_HEADERS})
 add_executable(ht_bench HT_bench.cc HT_structs.hh DB_structs.hh DB_params.hh DB_profiler.hh ${COMMON_HEADERS})

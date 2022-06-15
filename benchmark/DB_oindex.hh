@@ -2,9 +2,6 @@
 
 #include <map>
 #include "DB_index.hh"
-#include "../cuckoo_trie/src/cuckoo_trie.h"
-#include "../cuckoo_trie/src/main.h"
-
 
 namespace bench {
 template <typename K, typename V, typename DBParams>
@@ -1584,21 +1581,7 @@ public:
                 : key(k),
                   row_container((valid ? Sto::initialized_tid() : (Sto::initialized_tid() | invalid_bit)),
                                 !valid, v),
-                  deleted(false){
-            /*
-#ifdef __cplusplus \
-extern "C" {
-# endif
-            ctkv = (ct_kv*)malloc(kv_required_size(sizeof(key_type), sizeof(value_type)));
-            kv_init(ctkv, sizeof ( key_type ) , sizeof (value_type)) ;
-            ctkv_value_bytes = kv_value_bytes(ctkv);
-#ifdef __cplusplus \
-}
-# endif
-            std::memcpy(ctkv->bytes,&k, sizeof(key_type));
-            std::memcpy(ctkv_value_bytes,&v, sizeof(value_type));
-             */
-        }
+                  deleted(false){}
 
         version_type &version() {
             return row_container.row_version();
@@ -1624,7 +1607,7 @@ extern "C" {
     static constexpr bool track_nodes = (DBParams::NodeTrack && DBParams::TicToc);
     typedef std::conditional_t<track_nodes, TicTocVersion<>, TVersion> version_node_type;
 
-    typedef std::shared_ptr<cuckoo_trie> cuckoo_table;
+    typedef cuckoo_trie* cuckoo_table;
     using const_iterator = ct_iter*;
     typedef ct_kv* node_type;
 
@@ -1654,7 +1637,8 @@ extern "C" {
         this->table_init();
     }
     void table_init() {
-        ctIndex = std::make_shared<cuckoo_trie>(ct_alloc(256));
+
+        ctIndex = ct_alloc(256);
         if (ti == nullptr)
             ti = threadinfo::make(threadinfo::TI_MAIN, -1);
         key_gen_ = 0;
@@ -1674,21 +1658,11 @@ extern "C" {
     }
     sel_return_type
     select_row(const key_type &key, bench::RowAccess acc) {
-#ifdef __cplusplus \
-extern "C" {
-#endif
-        ct_kv* result = ct_lookup(ctIndex, sizeof(key_type), std::reinterpret_pointer_cast<uint8_t>(key));
-#ifdef __cplusplus \
-}
-#endif
+        cuckoo_trie* ct_pointer = ctIndex;
+
+        ct_kv* result = ct_lookup(ct_pointer, sizeof(key_type), std::reinterpret_pointer_cast<uint8_t>(key));
         if (result) {
-#ifdef __cplusplus \
-extern "C" {
-#endif
             uint8_t* value_res = kv_value_bytes(result);
-#ifdef __cplusplus \
-}
-#endif
             value_type v;
             std::memcpy(&v,value_res,sizeof(value_type));
             internal_elem* e(key,v,true);
@@ -1700,25 +1674,16 @@ extern "C" {
 
     sel_return_type
     select_row(const key_type &key, std::initializer_list<column_access_t> accesses) {
-#ifdef __cplusplus \
-extern "C" {
-#endif
-        ct_kv* result = ct_lookup(ctIndex, sizeof(key_type), std::reinterpret_pointer_cast<uint8_t>(key));
-#ifdef __cplusplus \
-}
-#endif
+        cuckoo_trie* ct_pointer = ctIndex;
+        ct_kv* result;
+        uint8_t *key_bytes;
+        memcpy(key_bytes,&key,sizeof(key_type));
+        result = ct_lookup(ct_pointer, sizeof(key_type), key_bytes);
         if (result) {
-#ifdef __cplusplus \
-extern "C" {
-#endif
             uint8_t* value_res = kv_value_bytes(result);
-#ifdef __cplusplus \
-}
-#endif
             value_type v;
             std::memcpy(&v,value_res,sizeof(value_type));
-            internal_elem* e(key,v,true);
-            e->ctkv = result;
+            auto e = new internal_elem(key,v,true);
             return select_row(reinterpret_cast<uintptr_t>(e), accesses);
         }
         return sel_return_type(true, false, 0, nullptr);
@@ -1837,7 +1802,7 @@ extern "C" {
         int inserted;
         ct_kv* ctkv_insert;
         uint8_t* ctkv_value_bytes;
-        cuckoo_trie* ctPointer = ctIndex.get();
+        cuckoo_trie* ctPointer = ctIndex;
 
 # ifdef __cplusplus \
 extern "C" {
@@ -1925,7 +1890,7 @@ extern "C" {
                     int limit = -1) {
 //        THIS IS THE FIRST ONE
         assert((limit == -1) || (limit > 0));
-        cuckoo_trie* ctPointer = ctIndex.get();
+        cuckoo_trie* ctPointer = ctIndex;
         //const_iterator iter = hotIndex->find(val.mIsValid ? begin : val.mValue->key);
 # ifdef __cplusplus \
 extern "C" {
@@ -2006,13 +1971,7 @@ extern "C" {
                 if(scanCount >= limit && limit > 0) {break;}
             }
             */
-# ifdef __cplusplus \
-extern "C" {
-#endif
             ct_kv *current = ct_iter_next(iter);
-# ifdef __cplusplus \
-}
-#endif
             memcpy(&currentKey,current->bytes, sizeof(key_type));
             ++scanCount;
             if(scanCount >= limit && limit > 0) {break;}
@@ -2020,6 +1979,18 @@ extern "C" {
         return true;
     }
 
+
+    void nontrans_put(const key_type &k, const value_type &v) {
+        internal_elem *oldElem;
+        int inserted;
+        ct_kv *ctkv_insert;
+        uint8_t *ctkv_value_bytes;
+        cuckoo_trie *ctPointer = ctIndex;
+        ctkv_insert = (ct_kv *) malloc(kv_required_size(sizeof(key_type), sizeof(value_type)));
+        kv_init(ctkv_insert, sizeof(key_type), sizeof(value_type));
+        ctkv_value_bytes = kv_value_bytes(ctkv_insert);
+        inserted = ct_insert(ctPointer, ctkv_insert);
+    }
 
     // TObject interface methods
     bool lock(TransItem &item, Transaction &txn) override {
@@ -2157,7 +2128,7 @@ extern "C" {
             auto key = item.key<item_key_t>();
             assert(key.is_row_item());
             internal_elem *e = key.internal_elem_ptr();
-            bool ok = _remove(e->key);
+            bool ok = false;
             if (!ok) {
                 std::cout << committed << "," << has_delete(item) << "," << has_insert(item) << std::endl;
                 always_assert(false, "insert-bit exclusive ownership violated");
@@ -2173,6 +2144,27 @@ private:
 
     std::map<key_type, value_type> backupMap;
 
+    static bool
+    access_all(std::array<access_t, value_container_type::num_versions> &cell_accesses,
+               std::array<TransItem *, value_container_type::num_versions> &cell_items,
+               value_container_type &row_container) {
+        for (size_t idx = 0; idx < cell_accesses.size(); ++idx) {
+            auto &access = cell_accesses[idx];
+            auto proxy = TransProxy(*Sto::transaction(), *cell_items[idx]);
+            if (static_cast<uint8_t>(access) & static_cast<uint8_t>(bench::access_t::read)) {
+                if (!proxy.observe(row_container.version_at(idx)))
+                    return false;
+            }
+            if (static_cast<uint8_t>(access) & static_cast<uint8_t>(bench::access_t::write)) {
+                if (!proxy.acquire_write(row_container.version_at(idx)))
+                    return false;
+                if (proxy.item().key<item_key_t>().is_row_item()) {
+                    proxy.item().add_flags(row_cell_bit);
+                }
+            }
+        }
+        return true;
+    }
 
 
     static bool has_insert(const TransItem &item) {
@@ -2212,7 +2204,15 @@ private:
     static bool is_ttnv(TransItem &item) {
         return (item.key<uintptr_t>() & ttnv_bit);
     }
+    static void copy_row(internal_elem *e, comm_type &comm) {
+        comm.operate(e->row_container.row);
+    }
 
+    static void copy_row(internal_elem *e, const value_type *new_row) {
+        if (new_row == nullptr)
+            return;
+        e->row_container.row = *new_row;
+    }
 
 
 };
