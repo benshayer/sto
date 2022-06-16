@@ -1,7 +1,3 @@
-#ifdef __cplusplus \
-extern "C" {
-#endif
-
 #include "atomics.h"
 
 typedef struct {
@@ -78,7 +74,3 @@ ct_entry_storage *find_entry_in_pair_by_color(cuckoo_trie *trie, ct_entry_local_
                                               uint8_t color);
 
 uint64_t get_jump_symbol(ct_entry *entry, uint64_t symbol_idx);
-
-#ifdef __cplusplus \
-}
-#endif

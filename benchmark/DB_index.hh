@@ -11,11 +11,11 @@
 #include "masstree_remove.hh"
 #include "masstree_scan.hh"
 #include "string.hh"
-#ifdef __cplusplus \
+#ifdef __cplusplus
 extern "C" {
 #endif
 #include "../cuckoo_trie/src/cuckoo_trie.h"
-#ifdef __cplusplus \
+#ifdef __cplusplus
 }
 #endif
 

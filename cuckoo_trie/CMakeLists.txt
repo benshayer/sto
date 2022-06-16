@@ -10,7 +10,7 @@ set(CT_DEPS ${CT_SOURCES} ${CT_DIR}/atomics.h ${CT_DIR}/config.h ${CT_DIR}/cucko
         ${CT_DIR}/key_object.h ${CT_DIR}/cuckoo_trie_internal.h ${CT_DIR}/random.h ${CT_DIR}/mt_debug.h)
 set(CT_TEST_SOURCES ${CT_DIR}/test.c ${CT_DIR}/random.c ${CT_DIR}/dataset.c ${CT_DIR}/util.c)
 set(CT_TEST_DEPS ${CT_TEST_SOURCES} ${CT_DIR}/cuckoo_trie.h ${CT_DIR}/random.h ${CT_DIR}/key_object.h ${CT_DIR}/dataset.h ${CT_DIR}/util.h)
-add_library(cuckoo_trie SHARED ${CT_DEPS})
+add_library(cuckoo_trie STATIC ${CT_DEPS})
 add_executable(ct_test ${CT_TEST_DEPS})
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)

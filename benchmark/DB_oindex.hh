@@ -939,6 +939,7 @@ private:
 template <typename K, typename V, typename DBParams>
 __thread typename ordered_index<K, V, DBParams>::table_params::threadinfo_type* ordered_index<K, V, DBParams>::ti;
 
+
 template <typename K, typename V, typename DBParams>
 class mvcc_ordered_index : public TObject {
 public:
@@ -1803,16 +1804,9 @@ public:
         ct_kv* ctkv_insert;
         uint8_t* ctkv_value_bytes;
         cuckoo_trie* ctPointer = ctIndex;
-
-# ifdef __cplusplus \
-extern "C" {
-# endif
         ctkv_insert = (ct_kv*)malloc(kv_required_size(sizeof(key_type), sizeof(value_type)));
         kv_init(ctkv_insert, sizeof ( key_type ) , sizeof (value_type)) ;
         ctkv_value_bytes = kv_value_bytes(ctkv_insert);
-# ifdef __cplusplus \
-}
-# endif
         std::memcpy(ctkv_insert->bytes,&key, sizeof(key_type));
         std::memcpy(ctkv_value_bytes,vptr, sizeof(value_type));
 
@@ -1892,9 +1886,6 @@ extern "C" {
         assert((limit == -1) || (limit > 0));
         cuckoo_trie* ctPointer = ctIndex;
         //const_iterator iter = hotIndex->find(val.mIsValid ? begin : val.mValue->key);
-# ifdef __cplusplus \
-extern "C" {
-# endif
         ct_kv ct_begin, ct_end;
         kv_init (&ct_begin, sizeof(key_type),sizeof(value_type));
         ct_begin.bytes = &begin;
@@ -1902,9 +1893,6 @@ extern "C" {
         ct_end.bytes = &end;
         const_iterator iter = ct_iter_alloc(ctPointer);
         ct_iter_goto(iter,sizeof(key_type),(uint8_t*)(begin));
-# ifdef __cplusplus \
-}
-# endif
         auto cell_accesses = column_to_cell_accesses<value_container_type>(accesses);
         auto value_callback = [&](key_type &key, internal_elem *e, bool &ret, bool &count) {
             TransProxy row_item = index_read_my_write ? Sto::item(this, item_key_t::row_item_key(e))
@@ -2216,4 +2204,7 @@ private:
 
 
 };
+
+    template <typename K, typename V, typename DBParams>
+    __thread typename ct_oindex<K, V, DBParams>::table_params::threadinfo_type* ct_oindex<K, V, DBParams>::ti;
 } // namespace bench

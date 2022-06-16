@@ -1,8 +1,5 @@
 #ifndef _INCLUDE_CUCKOO_TRIE_H_
 #define _INCLUDE_CUCKOO_TRIE_H_
-#ifdef __cplusplus \
-extern "C" {
-#endif
 
 #include <stdint.h>
 #include <pthread.h>
@@ -56,7 +53,4 @@ EXPORT void ct_mtdbg_thread_done();
 
 EXPORT void ct_mtdbg_seed(uint64_t seed);
 
-#ifdef __cplusplus \
-}
-#endif
 #endif
