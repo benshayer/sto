@@ -1677,7 +1677,7 @@ public:
     select_row(const key_type &key, std::initializer_list<column_access_t> accesses) {
         cuckoo_trie* ct_pointer = ctIndex;
         ct_kv* result;
-        uint8_t *key_bytes;
+        uint8_t *key_bytes = (uint8_t*)malloc(sizeof(key_type));
         memcpy(key_bytes,&key,sizeof(key_type));
         result = ct_lookup(ct_pointer, sizeof(key_type), key_bytes);
         if (result) {
@@ -1685,8 +1685,10 @@ public:
             value_type v;
             std::memcpy(&v,value_res,sizeof(value_type));
             auto e = new internal_elem(key,v,true);
+	    free(key_bytes);
             return select_row(reinterpret_cast<uintptr_t>(e), accesses);
         }
+	free(key_bytes);
         return sel_return_type(true, false, 0, nullptr);
     }
 
@@ -1974,10 +1976,14 @@ public:
         ct_kv *ctkv_insert;
         uint8_t *ctkv_value_bytes;
         cuckoo_trie *ctPointer = ctIndex;
+	key_type k_notconst = k;
+	value_type v_notconst = v;
         ctkv_insert = (ct_kv *) malloc(kv_required_size(sizeof(key_type), sizeof(value_type)));
         kv_init(ctkv_insert, sizeof(key_type), sizeof(value_type));
         ctkv_value_bytes = kv_value_bytes(ctkv_insert);
-        inserted = ct_insert(ctPointer, ctkv_insert);
+        std::memcpy(ctkv_insert->bytes,&k_notconst, sizeof(key_type));
+        std::memcpy(ctkv_value_bytes,&v_notconst, sizeof(value_type));
+	inserted = ct_insert(ctPointer, ctkv_insert);
     }
 
     // TObject interface methods
