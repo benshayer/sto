@@ -340,19 +340,20 @@ void test_coarse_basic() {
         assert(value->aa == 1);
         assert(t.try_commit());
     }
-/*
+
     {
         TestTransaction t(0);
         auto [success, found, row, value] = ci.select_row(key_type(1), {{nc::aa, access_t::update}});
         (void) row;
         assert(success && found);
         auto new_row = Sto::tx_alloc<coarse_grained_row>();
-        value.copy_into(new_row);
         new_row->aa = 2;
+	new_row->bb = value->bb;
+	new_row->cc = value->cc;
         ci.update_row(row, new_row);
         assert(t.try_commit());
     }
-*/
+
     {
         TestTransaction t1(1);
         auto [success, found, row, value] = ci.select_row(key_type(1), {{nc::aa, access_t::read}});

@@ -1788,6 +1788,15 @@ public:
         } else {
             row_item.acquire_write(e->version(), new_row);
         }
+        ct_kv* ctkv_update;
+        cuckoo_trie* ctPointer = ctIndex;
+        uint8_t* ctkv_value_bytes;
+        ctkv_update = (ct_kv*)malloc(kv_required_size(sizeof(key_type), sizeof(value_type)));
+        kv_init(ctkv_update, sizeof ( key_type ) , sizeof (value_type)) ;
+        ctkv_value_bytes = kv_value_bytes(ctkv_update);
+        std::memcpy(ctkv_update->bytes,&(e->key), sizeof(key_type));
+        std::memcpy(ctkv_value_bytes,new_row, sizeof(value_type));
+        ct_update(ctPointer,ctkv_update);
     }
 
     void update_row(uintptr_t rid, const comm_type &comm) {
