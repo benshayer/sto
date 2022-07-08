@@ -139,7 +139,7 @@ OPTFLAGS += -fsanitize=address
 endif
 
 ifndef OPT
-OPTFLAGS += -O3
+OPTFLAGS += -O0
 else
 OPTFLAGS += -O$(OPT)
 endif

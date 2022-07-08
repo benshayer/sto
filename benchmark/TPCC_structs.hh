@@ -376,6 +376,8 @@ struct history_key {
     history_key(uint64_t wid, uint64_t did, uint64_t cid, uint64_t hid)
         : w_id(bswap(static_cast<uint32_t>(wid))), d_id(bswap(static_cast<uint32_t>(did))),
           c_id(bswap(cid)), h_id(bswap(hid)) {}
+
+    history_key() : w_id(0), d_id(0), c_id(0), h_id(0) {}
     bool operator==(const history_key& other) const {
         return (w_id == other.w_id && d_id == other.d_id &&
                 c_id == other.c_id && h_id == other.h_id);
@@ -423,6 +425,8 @@ struct order_cidx_key {
         o_id = bswap(oid);
     }
 
+    order_cidx_key(): o_w_id(0), o_d_id(0), o_c_id(0), o_id(0){}
+
     order_cidx_key(const lcdf::Str& mt_key) {
         assert(mt_key.length() == sizeof(*this));
         memcpy(this, mt_key.data(), sizeof(*this));
@@ -458,6 +462,8 @@ struct order_key {
         o_d_id = bswap(did);
         o_id = bswap(oid);
     }
+
+    order_key(): o_w_id(0), o_d_id(0), o_id(0){}
 
     order_key(const lcdf::Str& mt_key) {
         assert(mt_key.length() == sizeof(*this));
@@ -512,6 +518,8 @@ struct orderline_key {
         ol_o_id = bswap(o);
         ol_number = bswap(n);
     }
+
+    orderline_key(): ol_w_id(0), ol_d_id(0), ol_o_id(0), ol_number(0){}
 
     orderline_key(const lcdf::Str& mt_key) {
         assert(mt_key.length() == sizeof(*this));

@@ -156,7 +156,7 @@ public:
     template <typename K, typename V>
     using OIndex = typename std::conditional<DBParams::MVCC,
           mvcc_ordered_index<K, V, DBParams>,
-          ordered_index<K, V, DBParams>>::type;
+          typename std::conditional<DBParams::MassTree, ordered_index<K, V, DBParams>,ct_oindex<K,V,DBParams>>::type>::type;
 
 #if TPCC_HASH_INDEX
     template <typename K, typename V>

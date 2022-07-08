@@ -15,6 +15,7 @@
 extern "C" {
 #endif
 #include "../cuckoo_trie/src/cuckoo_trie.h"
+#include "../cuckoo_trie/src/main.h"
 #ifdef __cplusplus
 }
 #endif

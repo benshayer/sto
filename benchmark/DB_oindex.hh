@@ -1552,6 +1552,7 @@ public:
     //typedef typename get_occ_version<DBParams>::type occ_version_type;
     typedef typename bench::get_version<DBParams>::type version_type;
 
+    using accessor_t = typename index_common<K, V, DBParams>::accessor_t;
 
     static constexpr typename version_type::type invalid_bit = TransactionTid::user_bit;
     static constexpr TransItem::flags_type insert_bit = TransItem::user0_bit;
@@ -1624,6 +1625,7 @@ public:
 
     typedef std::tuple<bool, bool, uintptr_t, const value_type *> sel_return_type;
     typedef std::tuple<bool, bool> ins_return_type;
+    typedef std::tuple<bool, bool, uintptr_t, UniRecordAccessor<V>> sel_split_return_type;
     typedef std::tuple<bool, bool> del_return_type;
 
     static __thread typename table_params::threadinfo_type *ti;
@@ -1657,6 +1659,116 @@ public:
     uint64_t gen_key() {
         return fetch_and_add(&key_gen_, 1);
     }
+
+    del_return_type
+    delete_row(const key_type &key) {
+        cuckoo_trie* ct_pointer = ctIndex;
+        uint8_t *key_bytes = (uint8_t*)malloc(sizeof(key_type));
+        memcpy(key_bytes,&key,sizeof(key_type));
+        ct_kv* result = ct_lookup(ct_pointer, sizeof(key_type), key_bytes);
+        if (result) {
+            uint8_t* value_res = kv_value_bytes(result);
+            value_type v;
+            std::memcpy(&v,value_res,sizeof(value_type));
+            auto e = new internal_elem(key,v,true);
+            free(key_bytes);
+            TransProxy row_item = Sto::item(this, item_key_t::row_item_key(e));
+
+            if (is_phantom(e, row_item)) {
+                goto abort;
+            }
+
+            if (index_read_my_write) {
+                if (has_delete(row_item))
+                    return del_return_type(true, false);
+                if (!e->valid() && has_insert(row_item)) {
+                    row_item.add_flags(delete_bit);
+                    return del_return_type(true, true);
+                }
+            }
+            if (!bench::version_adapter::select_for_update(row_item, e->version())) {
+                goto abort;
+            }
+            fence();
+            if (e->deleted) {
+                goto abort;
+            }
+            row_item.add_flags(delete_bit);
+        }
+
+        return del_return_type(true, true);
+
+        abort:
+        return del_return_type(false, false);
+    }
+
+
+    sel_split_return_type
+    select_split_row(const key_type& key, std::initializer_list<column_access_t> accesses) {
+        cuckoo_trie* ct_pointer = ctIndex;
+        ct_kv* result;
+        uint8_t *key_bytes = (uint8_t*)malloc(sizeof(key_type));
+        memcpy(key_bytes,&key,sizeof(key_type));
+        result = ct_lookup(ct_pointer, sizeof(key_type), key_bytes);
+        if (result) {
+            uint8_t* value_res = kv_value_bytes(result);
+            value_type v;
+            std::memcpy(&v,value_res,sizeof(value_type));
+            auto e = new internal_elem(key,v,true);
+            free(key_bytes);
+            return select_split_row(reinterpret_cast<uintptr_t>(e), accesses);
+        }
+        free(key_bytes);
+        return {
+                false,
+                false,
+                0,
+                UniRecordAccessor<V>(nullptr)
+        };
+    }
+
+
+    sel_split_return_type
+    select_split_row(uintptr_t rid, std::initializer_list<column_access_t> accesses) {
+        auto e = reinterpret_cast<internal_elem*>(rid);
+        TransProxy row_item = Sto::item(this, item_key_t::row_item_key(e));
+
+        // Translate from column accesses to cell accesses
+        // all buffered writes are only stored in the wdata_ of the row item (to avoid redundant copies)
+        auto cell_accesses = column_to_cell_accesses<value_container_type>(accesses);
+
+        std::array<TransItem*, value_container_type::num_versions> cell_items {};
+        bool any_has_write;
+        bool ok;
+        std::tie(any_has_write, cell_items) = extract_item_list<value_container_type>(cell_accesses, this, e);
+
+        if (is_phantom(e, row_item))
+            goto abort;
+
+        if (index_read_my_write) {
+            if (has_delete(row_item)) {
+                return {true, false, 0, UniRecordAccessor<V>(nullptr)};
+            }
+            if (any_has_write || has_row_update(row_item)) {
+                value_type *vptr;
+                if (has_insert(row_item))
+                    vptr = &e->row_container.row;
+                else
+                    vptr = row_item.template raw_write_value<value_type *>();
+                return {true, true, rid, UniRecordAccessor<V>(vptr)};
+            }
+        }
+
+        ok = access_all(cell_accesses, cell_items, e->row_container);
+        if (!ok)
+            goto abort;
+
+        return {true, true, rid, UniRecordAccessor<V>(&(e->row_container.row))};
+
+        abort:
+        return {false, false, 0, UniRecordAccessor<V>(nullptr)};
+    }
+
     sel_return_type
     select_row(const key_type &key, bench::RowAccess acc) {
         cuckoo_trie* ct_pointer = ctIndex;
@@ -1897,13 +2009,16 @@ public:
         assert((limit == -1) || (limit > 0));
         cuckoo_trie* ctPointer = ctIndex;
         //const_iterator iter = hotIndex->find(val.mIsValid ? begin : val.mValue->key);
-        ct_kv ct_begin, ct_end;
-        kv_init (&ct_begin, sizeof(key_type),sizeof(value_type));
-        ct_begin.bytes = &begin;
-        kv_init (&ct_end, sizeof(key_type),sizeof(value_type));
-        ct_end.bytes = &end;
+        ct_kv *ct_begin, *ct_end;
+        ct_begin = (ct_kv*)malloc(kv_required_size(sizeof(key_type), sizeof(value_type)));
+        ct_end = (ct_kv*)malloc(kv_required_size(sizeof(key_type), sizeof(value_type)));
+
+        kv_init(ct_begin, sizeof(key_type),sizeof(value_type));
+        kv_init(ct_end, sizeof(key_type),sizeof(value_type));
+        std::memcpy(ct_begin->bytes,&begin, sizeof(key_type));
+        std::memcpy(ct_end->bytes,&end, sizeof(key_type));
         const_iterator iter = ct_iter_alloc(ctPointer);
-        ct_iter_goto(iter,sizeof(key_type),(uint8_t*)(begin));
+        ct_iter_goto(iter,sizeof(key_type),ct_begin->bytes);
         auto cell_accesses = column_to_cell_accesses<value_container_type>(accesses);
         auto value_callback = [&](key_type &key, internal_elem *e, bool &ret, bool &count) {
             TransProxy row_item = index_read_my_write ? Sto::item(this, item_key_t::row_item_key(e))
@@ -1945,8 +2060,8 @@ public:
 
         int scanCount=0;
         ct_kv* current_kv = NULL;
-        key_type currentKey = NULL;
-        while(!iter->is_exhausted && !currentKey == end) {
+        key_type* currentKey = (key_type*)malloc(sizeof(key_type));
+        while(!iter->is_exhausted && !(*currentKey == end)) {
             /*
             bool count = true;
             bool visited = false;
@@ -1971,7 +2086,80 @@ public:
             }
             */
             ct_kv *current = ct_iter_next(iter);
-            memcpy(&currentKey,current->bytes, sizeof(key_type));
+            memcpy(currentKey,current->bytes, sizeof(key_type));
+            ++scanCount;
+            if(scanCount >= limit && limit > 0) {break;}
+        }
+        return true;
+    }
+
+    template<typename Callback, bool Reverse>
+    bool range_scan(const key_type &begin, const key_type &end, Callback callback,
+                    bench::RowAccess access, bool phantom_protection = true, int limit = -1) {
+        assert((limit == -1) || (limit > 0));
+        cuckoo_trie* ctPointer = ctIndex;
+        ct_kv* ct_begin, *ct_end;
+        ct_begin = (ct_kv*)malloc(kv_required_size(sizeof(key_type), sizeof(value_type)));
+        ct_end = (ct_kv*)malloc(kv_required_size(sizeof(key_type), sizeof(value_type)));
+
+        kv_init(ct_begin, sizeof(key_type),sizeof(value_type));
+        kv_init (ct_end, sizeof(key_type),sizeof(value_type));
+        std::memcpy(&ct_begin->bytes,&begin, sizeof(key_type));
+        std::memcpy(&ct_end->bytes,&end, sizeof(key_type));
+        const_iterator iter = ct_iter_alloc(ctPointer);
+        ct_iter_goto(iter,sizeof(key_type),ct_begin->bytes);
+        int scanCount=0;
+
+        auto value_callback = [&](const lcdf::Str &key, internal_elem *e, bool &ret, bool &count) {
+            TransProxy row_item = index_read_my_write ? Sto::item(this, item_key_t::row_item_key(e))
+                                                      : Sto::fresh_item(this, item_key_t::row_item_key(e));
+
+            if (index_read_my_write) {
+                if (has_delete(row_item)) {
+                    ret = true;
+                    count = false;
+                    return true;
+                }
+                if (has_row_update(row_item)) {
+                    if (has_insert(row_item))
+                        ret = callback(key_type(key), e->row_container.row);
+                    else
+                        ret = callback(key_type(key), *(row_item.template raw_write_value<value_type *>()));
+                    return true;
+                }
+            }
+
+            bool ok = true;
+            switch (access) {
+                case bench::RowAccess::ObserveValue:
+                case bench::RowAccess::ObserveExists:
+                    ok = row_item.observe(e->version());
+                    break;
+                case bench::RowAccess::None:
+                    break;
+                default:
+                    always_assert(false, "unsupported access type in range_scan");
+                    break;
+            }
+
+            if (!ok)
+                return false;
+
+            // skip invalid (inserted but yet committed) values, but do not abort
+            if (!e->valid()) {
+                ret = true;
+                count = false;
+                return true;
+            }
+
+            ret = callback(key_type(key), e->row_container.row);
+            return true;
+        };
+        ct_kv* current_kv = NULL;
+        key_type* currentKey = (key_type*)malloc(sizeof(key_type));
+        while(!iter->is_exhausted && !(*currentKey == end)) {
+            ct_kv *current = ct_iter_next(iter);
+            memcpy(currentKey,current->bytes, sizeof(key_type));
             ++scanCount;
             if(scanCount >= limit && limit > 0) {break;}
         }

@@ -1394,6 +1394,8 @@ template <>
 class UniRecordAccessor<tpcc::orderline_value> : public RecordAccessor<UniRecordAccessor<tpcc::orderline_value>, tpcc::orderline_value> {
  public:
   UniRecordAccessor(const tpcc::orderline_value* const vptr) : vptr_(vptr) {}
+  UniRecordAccessor(const tpcc::orderline_value vptr) : vptr_(&vptr) {}
+
 
  private:
   
