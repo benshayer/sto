@@ -1668,6 +1668,7 @@ public:
         ct_kv* result = ct_lookup(ct_pointer, sizeof(key_type), key_bytes);
         if (result) {
             uint8_t* value_res = kv_value_bytes(result);
+            *(kv_key_bytes(result)+ kv_key_size(result)+ kv_value_size(result)) = 1;
             value_type v;
             std::memcpy(&v,value_res,sizeof(value_type));
             auto e = new internal_elem(key,v,true);
@@ -1903,7 +1904,7 @@ public:
         ct_kv* ctkv_update;
         cuckoo_trie* ctPointer = ctIndex;
         uint8_t* ctkv_value_bytes;
-        ctkv_update = (ct_kv*)malloc(kv_required_size(sizeof(key_type), sizeof(value_type)));
+        ctkv_update = (ct_kv*)calloc(kv_required_size(sizeof(key_type), sizeof(value_type)+1));
         kv_init(ctkv_update, sizeof ( key_type ) , sizeof (value_type)) ;
         ctkv_value_bytes = kv_value_bytes(ctkv_update);
         std::memcpy(ctkv_update->bytes,&(e->key), sizeof(key_type));
@@ -1927,8 +1928,8 @@ public:
         ct_kv* ctkv_insert;
         uint8_t* ctkv_value_bytes;
         cuckoo_trie* ctPointer = ctIndex;
-        ctkv_insert = (ct_kv*)malloc(kv_required_size(sizeof(key_type), sizeof(value_type)));
-        kv_init(ctkv_insert, sizeof ( key_type ) , sizeof (value_type)) ;
+        ctkv_insert = (ct_kv*)calloc(kv_required_size(sizeof(key_type), sizeof(value_type)+1));
+        kv_init(ctkv_insert, sizeof ( key_type ) , sizeof (value_type));
         ctkv_value_bytes = kv_value_bytes(ctkv_insert);
         std::memcpy(ctkv_insert->bytes,&key, sizeof(key_type));
         std::memcpy(ctkv_value_bytes,vptr, sizeof(value_type));
@@ -2173,9 +2174,9 @@ public:
         ct_kv *ctkv_insert;
         uint8_t *ctkv_value_bytes;
         cuckoo_trie *ctPointer = ctIndex;
-	key_type k_notconst = k;
-	value_type v_notconst = v;
-        ctkv_insert = (ct_kv *) malloc(kv_required_size(sizeof(key_type), sizeof(value_type)));
+	    key_type k_notconst = k;
+	    value_type v_notconst = v;
+        ctkv_insert = (ct_kv *) calloc(kv_required_size(sizeof(key_type), sizeof(value_type)+1));
         kv_init(ctkv_insert, sizeof(key_type), sizeof(value_type));
         ctkv_value_bytes = kv_value_bytes(ctkv_insert);
         std::memcpy(ctkv_insert->bytes,&k_notconst, sizeof(key_type));
@@ -2319,13 +2320,16 @@ public:
             auto key = item.key<item_key_t>();
             assert(key.is_row_item());
             internal_elem *e = key.internal_elem_ptr();
-            bool ok = false;
+            bool ok = _remove(e->key);
             if (!ok) {
                 std::cout << committed << "," << has_delete(item) << "," << has_insert(item) << std::endl;
                 always_assert(false, "insert-bit exclusive ownership violated");
             }
             item.clear_needs_unlock();
         }
+    }
+    ~ct_oindex(){
+        ct_free(ctIndex);
     }
 
 
@@ -2334,6 +2338,21 @@ private:
     cuckoo_table ctIndex;
 
     std::map<key_type, value_type> backupMap;
+
+    bool _remove(const key_type &key) {
+        uint8_t *key_bytes = (uint8_t*)malloc(sizeof(key_type));
+        memcpy(key_bytes,&key,sizeof(key_type));
+        ct_kv* result = ct_lookup(ct_pointer, sizeof(key_type), key_bytes);
+//        If found in ctIndex
+        if (result && *(kv_value_bytes(result)+ kv_size(result)) == 0) {
+            *(kv_value_bytes(result)+ kv_size(result)+ kv_key_size(result)) = 1;
+            value_type v;
+            std::memcpy(&v,value_res,sizeof(value_type));
+            auto e = new internal_elem(key,v,true);
+            Transaction::rcu_delete(res.mValue);
+        }
+        return  result != NULL;
+    }
 
     static bool
     access_all(std::array<access_t, value_container_type::num_versions> &cell_accesses,
