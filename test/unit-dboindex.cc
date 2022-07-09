@@ -572,12 +572,12 @@ void test_mvcc_snapshot() {
 
 int main() {
     test_coarse_basic();
-    //test_coarse_read_my_split();
-    //test_coarse_conflict0();
+    test_coarse_read_my_split();
+   // test_coarse_conflict0();
     //test_coarse_conflict1();
-    //test_fine_conflict0();
-    //test_fine_conflict1();
-    //test_fine_conflict2();
+    test_fine_conflict0();
+    test_fine_conflict1();
+    test_fine_conflict2();
     //test_fine_delete0();
     //test_fine_delete1();
     //test_mvcc_snapshot();
