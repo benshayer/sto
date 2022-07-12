@@ -1573,10 +1573,6 @@ public:
     struct internal_elem {
         key_type key;
         value_container_type row_container;
-        /*
-        ct_kv* ctkv;
-        uint8_t* ctkv_value_bytes;
-         */
         bool deleted;
 
         internal_elem(const key_type &k, const value_type &v, bool valid)
@@ -1667,11 +1663,7 @@ public:
         memcpy(key_bytes,&key,sizeof(key_type));
         ct_kv* result = ct_lookup(ct_pointer, sizeof(key_type), key_bytes);
         if (result) {
-            uint8_t* value_res = kv_value_bytes(result);
-            *(kv_key_bytes(result)+ kv_key_size(result)+ kv_value_size(result)) = 1;
-            value_type v;
-            std::memcpy(&v,value_res,sizeof(value_type));
-            auto e = new internal_elem(key,v,true);
+            internal_elem *e = (internal_elem*)kv_value_bytes(result);
             free(key_bytes);
             TransProxy row_item = Sto::item(this, item_key_t::row_item_key(e));
 
@@ -1901,15 +1893,6 @@ public:
         } else {
             row_item.acquire_write(e->version(), new_row);
         }
-        ct_kv* ctkv_update;
-        cuckoo_trie* ctPointer = ctIndex;
-        uint8_t* ctkv_value_bytes;
-        ctkv_update = (ct_kv*)calloc(kv_required_size(sizeof(key_type), sizeof(value_type)+1));
-        kv_init(ctkv_update, sizeof ( key_type ) , sizeof (value_type)) ;
-        ctkv_value_bytes = kv_value_bytes(ctkv_update);
-        std::memcpy(ctkv_update->bytes,&(e->key), sizeof(key_type));
-        std::memcpy(ctkv_value_bytes,new_row, sizeof(value_type));
-        ct_update(ctPointer,ctkv_update);
     }
 
     void update_row(uintptr_t rid, const comm_type &comm) {
@@ -1922,26 +1905,23 @@ public:
     insert_row(const key_type &key, value_type *vptr, bool overwrite = false) {
         auto elemToInsert = new internal_elem(key, vptr ? *vptr : value_type(),
                                               false /*!valid*/);
-
-        internal_elem* oldElem;
-        int inserted;
+        ct_kv *previousKey;
         ct_kv* ctkv_insert;
+        int status;
+        bool alreadyIn = false;
         uint8_t* ctkv_value_bytes;
         cuckoo_trie* ctPointer = ctIndex;
-        ctkv_insert = (ct_kv*)calloc(kv_required_size(sizeof(key_type), sizeof(value_type)+1));
-        kv_init(ctkv_insert, sizeof ( key_type ) , sizeof (value_type));
+        ctkv_insert = (ct_kv*)calloc(kv_required_size(sizeof(key_type), sizeof(internal_elem*)));
+        kv_init(ctkv_insert, sizeof ( key_type ) , sizeof (internal_elem*));
         ctkv_value_bytes = kv_value_bytes(ctkv_insert);
         std::memcpy(ctkv_insert->bytes,&key, sizeof(key_type));
-        std::memcpy(ctkv_value_bytes,vptr, sizeof(value_type));
+        std::memcpy(ctkv_value_bytes,&elemToInsert, sizeof(internal_elem*));
 
 
 
-        inserted = ct_insert(ctPointer , ctkv_insert);
+        previousKey = ct_lookup(ctPointer , sizeof(key_type),ctkv_insert->bytes);
 
-//        Used only to make the function more readable
-        bool alreadyIn = inserted == S_ALREADYIN;
-
-        if (alreadyIn) {
+        if (previousKey) {
             // NB: the insert method only manipulates the row_item. It is possible
             // this insert is overwriting some previous updates on selected columns
             // The expected behavior is that this row-level operation should overwrite
@@ -1951,8 +1931,10 @@ public:
             // been locked then we simply ignore installing any changes made by cell items.
             // It should be trivial for a cell item to find the corresponding row item
             // and figure out if the row-level version is locked.
-            internal_elem* e = oldElem;
-
+            alreadyIn = true;
+            internal_elem *e = (internal_elem*) kv_value_bytes(previousKey);
+            status = ct_update(ctPointer,ctkv_insert);
+            if (status) {goto abort;}
             TransProxy row_item = Sto::item(this, item_key_t::row_item_key(e));
 
             if (is_phantom(e, row_item))
@@ -1991,11 +1973,13 @@ public:
             }
         }
         else {
+            status = ct_insert(ctPointer,ctkv_insert);
+            if (status) {goto abort;}
             TransProxy row_item = Sto::item(this, item_key_t::row_item_key(elemToInsert));
             row_item.acquire_write(elemToInsert->version());
             row_item.add_flags(insert_bit);
         }
-        return ins_return_type(true, reinterpret_cast<bool>(alreadyIn));
+        return ins_return_type(true, alreadyIn);
 
         abort:
         delete elemToInsert;
@@ -2011,11 +1995,11 @@ public:
         cuckoo_trie* ctPointer = ctIndex;
         //const_iterator iter = hotIndex->find(val.mIsValid ? begin : val.mValue->key);
         ct_kv *ct_begin, *ct_end;
-        ct_begin = (ct_kv*)malloc(kv_required_size(sizeof(key_type), sizeof(value_type)));
-        ct_end = (ct_kv*)malloc(kv_required_size(sizeof(key_type), sizeof(value_type)));
+        ct_begin = (ct_kv*)malloc(kv_required_size(sizeof(key_type), sizeof(internal_elem*)));
+        ct_end = (ct_kv*)malloc(kv_required_size(sizeof(key_type), sizeof(internal_elem*)));
 
-        kv_init(ct_begin, sizeof(key_type),sizeof(value_type));
-        kv_init(ct_end, sizeof(key_type),sizeof(value_type));
+        kv_init(ct_begin, sizeof(key_type),sizeof(internal_elem*));
+        kv_init(ct_end, sizeof(key_type),sizeof(internal_elem*));
         std::memcpy(ct_begin->bytes,&begin, sizeof(key_type));
         std::memcpy(ct_end->bytes,&end, sizeof(key_type));
         const_iterator iter = ct_iter_alloc(ctPointer);
@@ -2100,11 +2084,11 @@ public:
         assert((limit == -1) || (limit > 0));
         cuckoo_trie* ctPointer = ctIndex;
         ct_kv* ct_begin, *ct_end;
-        ct_begin = (ct_kv*)malloc(kv_required_size(sizeof(key_type), sizeof(value_type)));
-        ct_end = (ct_kv*)malloc(kv_required_size(sizeof(key_type), sizeof(value_type)));
+        ct_begin = (ct_kv*)malloc(kv_required_size(sizeof(key_type), sizeof(internal_elem*)));
+        ct_end = (ct_kv*)malloc(kv_required_size(sizeof(key_type), sizeof(internal_elem*)));
 
-        kv_init(ct_begin, sizeof(key_type),sizeof(value_type));
-        kv_init (ct_end, sizeof(key_type),sizeof(value_type));
+        kv_init(ct_begin, sizeof(key_type),sizeof(internal_elem*));
+        kv_init (ct_end, sizeof(key_type),sizeof(internal_elem*));
         std::memcpy(&ct_begin->bytes,&begin, sizeof(key_type));
         std::memcpy(&ct_end->bytes,&end, sizeof(key_type));
         const_iterator iter = ct_iter_alloc(ctPointer);
@@ -2169,19 +2153,32 @@ public:
 
 
     void nontrans_put(const key_type &k, const value_type &v) {
+        auto new_v = new value_type(v);
+        auto new_k = new key_type(k);
+        auto elemToInsert = new internal_elem(*new_k, *new_v, true);
         internal_elem *oldElem;
-        int inserted;
-        ct_kv *ctkv_insert;
+        ct_kv *ctkv_insert, *ctkv_previous;
         uint8_t *ctkv_value_bytes;
         cuckoo_trie *ctPointer = ctIndex;
-	    key_type k_notconst = k;
-	    value_type v_notconst = v;
-        ctkv_insert = (ct_kv *) calloc(kv_required_size(sizeof(key_type), sizeof(value_type)+1));
-        kv_init(ctkv_insert, sizeof(key_type), sizeof(value_type));
+        ctkv_insert = (ct_kv *) calloc(kv_required_size(sizeof(key_type), sizeof(internal_elem*)));
+        kv_init(ctkv_insert, sizeof(key_type), sizeof(internal_elem*));
         ctkv_value_bytes = kv_value_bytes(ctkv_insert);
-        std::memcpy(ctkv_insert->bytes,&k_notconst, sizeof(key_type));
-        std::memcpy(ctkv_value_bytes,&v_notconst, sizeof(value_type));
-	inserted = ct_insert(ctPointer, ctkv_insert);
+        std::memcpy(ctkv_insert->bytes,new_k, sizeof(key_type));
+        std::memcpy(ctkv_value_bytes,&elemToInsert, sizeof(internal_elem*));
+        ctkv_previous = ct_lookup(ctPointer,sizeof(key_type),ctkv_insert->bytes);
+        if (ctkv_previous) {
+            internal_elem* e = (internal_elem*)ctkv_value_bytes(ctkv_previous);
+            ct_update(ctPointer,ctkv_insert);
+            if (value_is_small)
+                e->row_container.row = v;
+            else
+                copy_row(e,&v);
+            delete new_v;
+            delete new_k;
+            delete elemToInsert;
+        } else {
+            ct_insert(ctPointer, ctkv_insert);
+        }
     }
 
     // TObject interface methods
@@ -2344,12 +2341,10 @@ private:
         memcpy(key_bytes,&key,sizeof(key_type));
         ct_kv* result = ct_lookup(ct_pointer, sizeof(key_type), key_bytes);
 //        If found in ctIndex
-        if (result && *(kv_value_bytes(result)+ kv_size(result)) == 0) {
-            *(kv_value_bytes(result)+ kv_size(result)+ kv_key_size(result)) = 1;
-            value_type v;
-            std::memcpy(&v,value_res,sizeof(value_type));
-            auto e = new internal_elem(key,v,true);
-            Transaction::rcu_delete(res.mValue);
+        if (result && ((internal_elem*)kv_value_bytes(result))->deleted == false) {
+            internal_elem* e = ((internal_elem*)kv_value_bytes(result))
+            e->deleted = true;
+            Transaction::rcu_delete(e);
         }
         return  result != NULL;
     }
