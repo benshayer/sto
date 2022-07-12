@@ -1637,7 +1637,7 @@ public:
     }
     void table_init() {
 
-        ctIndex = ct_alloc(256);
+        ctIndex = ct_alloc(100000);
         if (ti == nullptr)
             ti = threadinfo::make(threadinfo::TI_MAIN, -1);
         key_gen_ = 0;
@@ -1663,7 +1663,7 @@ public:
         memcpy(key_bytes,&key,sizeof(key_type));
         ct_kv* result = ct_lookup(ct_pointer, sizeof(key_type), key_bytes);
         if (result) {
-            internal_elem *e = (internal_elem*)kv_value_bytes(result);
+            internal_elem *e = *(internal_elem**)kv_value_bytes(result);
             free(key_bytes);
             TransProxy row_item = Sto::item(this, item_key_t::row_item_key(e));
 
@@ -1911,7 +1911,7 @@ public:
         bool alreadyIn = false;
         uint8_t* ctkv_value_bytes;
         cuckoo_trie* ctPointer = ctIndex;
-        ctkv_insert = (ct_kv*)calloc(kv_required_size(sizeof(key_type), sizeof(internal_elem*)));
+        ctkv_insert = (ct_kv*)calloc(kv_required_size(sizeof(key_type), sizeof(internal_elem*)),sizeof(char));
         kv_init(ctkv_insert, sizeof ( key_type ) , sizeof (internal_elem*));
         ctkv_value_bytes = kv_value_bytes(ctkv_insert);
         std::memcpy(ctkv_insert->bytes,&key, sizeof(key_type));
@@ -1932,7 +1932,7 @@ public:
             // It should be trivial for a cell item to find the corresponding row item
             // and figure out if the row-level version is locked.
             alreadyIn = true;
-            internal_elem *e = (internal_elem*) kv_value_bytes(previousKey);
+            internal_elem *e = *(internal_elem**) kv_value_bytes(previousKey);
             status = ct_update(ctPointer,ctkv_insert);
             if (status) {goto abort;}
             TransProxy row_item = Sto::item(this, item_key_t::row_item_key(e));
@@ -2160,14 +2160,14 @@ public:
         ct_kv *ctkv_insert, *ctkv_previous;
         uint8_t *ctkv_value_bytes;
         cuckoo_trie *ctPointer = ctIndex;
-        ctkv_insert = (ct_kv *) calloc(kv_required_size(sizeof(key_type), sizeof(internal_elem*)));
+        ctkv_insert = (ct_kv *) calloc(kv_required_size(sizeof(key_type), sizeof(internal_elem*)),sizeof(char));
         kv_init(ctkv_insert, sizeof(key_type), sizeof(internal_elem*));
         ctkv_value_bytes = kv_value_bytes(ctkv_insert);
         std::memcpy(ctkv_insert->bytes,new_k, sizeof(key_type));
         std::memcpy(ctkv_value_bytes,&elemToInsert, sizeof(internal_elem*));
         ctkv_previous = ct_lookup(ctPointer,sizeof(key_type),ctkv_insert->bytes);
         if (ctkv_previous) {
-            internal_elem* e = (internal_elem*)ctkv_value_bytes(ctkv_previous);
+            internal_elem* e = *(internal_elem**)kv_value_bytes(ctkv_previous);
             ct_update(ctPointer,ctkv_insert);
             if (value_is_small)
                 e->row_container.row = v;
@@ -2339,10 +2339,10 @@ private:
     bool _remove(const key_type &key) {
         uint8_t *key_bytes = (uint8_t*)malloc(sizeof(key_type));
         memcpy(key_bytes,&key,sizeof(key_type));
-        ct_kv* result = ct_lookup(ct_pointer, sizeof(key_type), key_bytes);
+        ct_kv* result = ct_lookup(ctIndex, sizeof(key_type), key_bytes);
 //        If found in ctIndex
-        if (result && ((internal_elem*)kv_value_bytes(result))->deleted == false) {
-            internal_elem* e = ((internal_elem*)kv_value_bytes(result))
+        if (result && (*(internal_elem**)kv_value_bytes(result))->deleted == false) {
+            internal_elem* e = (*(internal_elem**)kv_value_bytes(result));
             e->deleted = true;
             Transaction::rcu_delete(e);
         }
