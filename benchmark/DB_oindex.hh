@@ -1637,7 +1637,7 @@ public:
     }
     void table_init() {
 
-        ctIndex = ct_alloc(100000);
+        ctIndex = ct_alloc(1000000);
         if (ti == nullptr)
             ti = threadinfo::make(threadinfo::TI_MAIN, -1);
         key_gen_ = 0;
@@ -1664,7 +1664,6 @@ public:
         ct_kv* result = ct_lookup(ct_pointer, sizeof(key_type), key_bytes);
         if (result) {
             internal_elem *e = *(internal_elem**)kv_value_bytes(result);
-            free(key_bytes);
             TransProxy row_item = Sto::item(this, item_key_t::row_item_key(e));
 
             if (is_phantom(e, row_item)) {
@@ -1705,13 +1704,9 @@ public:
         result = ct_lookup(ct_pointer, sizeof(key_type), key_bytes);
         if (result) {
             uint8_t* value_res = kv_value_bytes(result);
-            value_type v;
-            std::memcpy(&v,value_res,sizeof(value_type));
-            auto e = new internal_elem(key,v,true);
-            free(key_bytes);
+            auto e = *(internal_elem**)(value_res);
             return select_split_row(reinterpret_cast<uintptr_t>(e), accesses);
         }
-        free(key_bytes);
         return {
                 false,
                 false,
@@ -1790,10 +1785,8 @@ public:
             value_type v;
             std::memcpy(&v,value_res,sizeof(value_type));
             auto e = new internal_elem(key,v,true);
-	    free(key_bytes);
             return select_row(reinterpret_cast<uintptr_t>(e), accesses);
         }
-	free(key_bytes);
         return sel_return_type(true, false, 0, nullptr);
     }
 
@@ -2044,37 +2037,13 @@ public:
         };
 
         int scanCount=0;
-        ct_kv* current_kv = NULL;
-        key_type* currentKey = (key_type*)malloc(sizeof(key_type));
-        while(!iter->is_exhausted && !(*currentKey == end)) {
-            /*
-            bool count = true;
-            bool visited = false;
-            internal_elem* e = *(iter);
-            key_type& currentKey = e->key;
-
-//          Since there is no remove in HotTrie
-            if (e->deleted) {++iter;continue;}
-
-            if ((Reverse && (memcmp(&end, &(*iter)->key, sizeof(end)) >= 0)) ||
-                (!Reverse && (memcmp(&end, &(*iter)->key, sizeof(end)) <= 0))) {
-                break;
-            }
-
-            if(!value_callback(currentKey, e, visited, count)) {
-                if (count) {++scanCount;}
-                return false;
-            }else {
-                if(count) {++scanCount;}
-                if(!visited) {return false;}
-                if(scanCount >= limit && limit > 0) {break;}
-            }
-            */
-            ct_kv *current = ct_iter_next(iter);
-            memcpy(currentKey,current->bytes, sizeof(key_type));
-            ++scanCount;
-            if(scanCount >= limit && limit > 0) {break;}
-        }
+        ct_kv *current_ctkv;
+        do {
+	    current_ctkv = ct_iter_next(iter);
+       	    ++scanCount;
+            if (scanCount >= limit && limit > 0) { break; }
+            } while (!iter->is_exhausted && kv_key_compare(current_ctkv, ct_end) <= 0);
+        
         return true;
     }
 
