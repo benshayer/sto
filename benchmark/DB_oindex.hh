@@ -1637,7 +1637,7 @@ public:
     }
     void table_init() {
 
-        ctIndex = ct_alloc(1000000);
+        ctIndex = ct_alloc(10000000);
         if (ti == nullptr)
             ti = threadinfo::make(threadinfo::TI_MAIN, -1);
         key_gen_ = 0;
@@ -1764,10 +1764,7 @@ public:
         ct_kv* result = ct_lookup(ct_pointer, sizeof(key_type), std::reinterpret_pointer_cast<uint8_t>(key));
         if (result) {
             uint8_t* value_res = kv_value_bytes(result);
-            value_type v;
-            std::memcpy(&v,value_res,sizeof(value_type));
-            internal_elem* e(key,v,true);
-            e->ctkv = result;
+            auto e = *(internal_elem**)(value_res);
             return select_row(reinterpret_cast<uintptr_t>(e), acc);
         }
         return sel_return_type(true, false, 0, nullptr);
@@ -1782,9 +1779,7 @@ public:
         result = ct_lookup(ct_pointer, sizeof(key_type), key_bytes);
         if (result) {
             uint8_t* value_res = kv_value_bytes(result);
-            value_type v;
-            std::memcpy(&v,value_res,sizeof(value_type));
-            auto e = new internal_elem(key,v,true);
+            auto e = *(internal_elem**)(value_res);
             return select_row(reinterpret_cast<uintptr_t>(e), accesses);
         }
         return sel_return_type(true, false, 0, nullptr);
