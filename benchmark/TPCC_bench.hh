@@ -352,7 +352,15 @@ tpcc_db<DBParams>::tpcc_db(int num_whs)
       oid_gen_() {
     //constexpr size_t num_districts = NUM_DISTRICTS_PER_WAREHOUSE;
     //constexpr size_t num_customers = NUM_CUSTOMERS_PER_DISTRICT * NUM_DISTRICTS_PER_WAREHOUSE;
-
+   tbl_dts_.reserve(num_whs);
+   tbl_cus_.reserve(num_whs);
+   tbl_ods_.reserve(num_whs);
+   tbl_ols_.reserve(num_whs);
+   tbl_sts_.reserve(num_whs);
+   tbl_cni_.reserve(num_whs);
+   tbl_oci_.reserve(num_whs);
+   tbl_hts_.reserve(num_whs);
+   tbl_nos_.reserve(num_whs);
     tbl_its_ = new it_table_type(999983/*NUM_ITEMS * 2*/);
     for (auto i = 0; i < num_whs; ++i) {
         tbl_dts_.emplace_back(32/*num_districts * 2*/);

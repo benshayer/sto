@@ -1637,7 +1637,7 @@ public:
     }
     void table_init() {
 
-        ctIndex = ct_alloc(10000000);
+        ctIndex = ct_alloc(20000000);
         if (ti == nullptr)
             ti = threadinfo::make(threadinfo::TI_MAIN, -1);
         key_gen_ = 0;
@@ -2104,31 +2104,26 @@ public:
             ret = callback(key_type(key), e->row_container.row);
             return true;
         };
-        ct_kv* current_kv = NULL;
-        key_type* currentKey = (key_type*)malloc(sizeof(key_type));
-        while(!iter->is_exhausted && !(*currentKey == end)) {
-            ct_kv *current = ct_iter_next(iter);
-            memcpy(currentKey,current->bytes, sizeof(key_type));
-            ++scanCount;
-            if(scanCount >= limit && limit > 0) {break;}
-        }
+        ct_kv *current_ctkv;
+        do {
+	    current_ctkv = ct_iter_next(iter);
+       	    ++scanCount;
+            if (scanCount >= limit && limit > 0) { break; }
+            } while (!iter->is_exhausted && kv_key_compare(current_ctkv, ct_end) <= 0);
+        
         return true;
     }
 
 
     void nontrans_put(const key_type &k, const value_type &v) {
-        auto new_v = new value_type(v);
-        auto new_k = new key_type(k);
-        auto elemToInsert = new internal_elem(*new_k, *new_v, true);
-        internal_elem *oldElem;
+        auto elemToInsert = new internal_elem(k, v, true);
         ct_kv *ctkv_insert, *ctkv_previous;
         uint8_t *ctkv_value_bytes;
         cuckoo_trie *ctPointer = ctIndex;
         ctkv_insert = (ct_kv *) calloc(kv_required_size(sizeof(key_type), sizeof(internal_elem*)),sizeof(char));
         kv_init(ctkv_insert, sizeof(key_type), sizeof(internal_elem*));
         ctkv_value_bytes = kv_value_bytes(ctkv_insert);
-        std::memcpy(ctkv_insert->bytes,new_k, sizeof(key_type));
-        std::memcpy(ctkv_value_bytes,&elemToInsert, sizeof(internal_elem*));
+        std::memcpy(ctkv_insert->bytes,&k, sizeof(key_type));
         ctkv_previous = ct_lookup(ctPointer,sizeof(key_type),ctkv_insert->bytes);
         if (ctkv_previous) {
             internal_elem* e = *(internal_elem**)kv_value_bytes(ctkv_previous);
@@ -2137,10 +2132,10 @@ public:
                 e->row_container.row = v;
             else
                 copy_row(e,&v);
-            delete new_v;
-            delete new_k;
-            delete elemToInsert;
         } else {
+            auto elemToInsert = new internal_elem(k, v, true);
+            ctkv_value_bytes = kv_value_bytes(ctkv_insert);
+            std::memcpy(ctkv_value_bytes,&elemToInsert, sizeof(internal_elem*));
             ct_insert(ctPointer, ctkv_insert);
         }
     }
@@ -2293,10 +2288,9 @@ public:
         ct_free(ctIndex);
     }
 
-
 private:
     uint64_t key_gen_;
-    cuckoo_table ctIndex;
+   cuckoo_table ctIndex;
 
     std::map<key_type, value_type> backupMap;
 
