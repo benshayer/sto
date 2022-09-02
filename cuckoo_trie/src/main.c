@@ -1931,6 +1931,23 @@ ct_kv *ct_lookup(cuckoo_trie *trie, uint64_t key_size, uint8_t *key_bytes) {
     return NULL;
 }
 
+void ct_finger_search(cuckoo_trie *trie, uint64_t key_size, uint8_t *key_bytes, uint32_t* version) {
+    int symbol;
+    ct_finger finger;
+    ct_entry_storage *root;
+    uint64_t bucket;
+
+    root = init_finger(&finger, trie);
+
+    if (root == NULL)
+        *version=0;  // The trie is empty
+	return;
+    symbol = descend(&finger, key_size, key_bytes, 0);
+    bucket = finger.containing_entry.primary_bucket;
+    *version = trie->buckets[bucket].write_lock_and_seq;
+    return;
+}
+
 int ct_update_internal(cuckoo_trie *trie, ct_kv *kv) {
     int ret;
     int symbol;

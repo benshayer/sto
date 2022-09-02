@@ -1706,13 +1706,23 @@ public:
             uint8_t* value_res = kv_value_bytes(result);
             auto e = *(internal_elem**)(value_res);
             return select_split_row(reinterpret_cast<uintptr_t>(e), accesses);
-        }
-        return {
+        } else {
+        if (!(register_internode_version(key))){
+                 return {
                 false,
                 false,
                 0,
                 UniRecordAccessor<V>(nullptr)
+        	};
+	}
+        return {
+                true,
+                false,
+                0,
+                UniRecordAccessor<V>(nullptr)
         };
+
+        }
     }
 
 
@@ -1766,8 +1776,12 @@ public:
             uint8_t* value_res = kv_value_bytes(result);
             auto e = *(internal_elem**)(value_res);
             return select_row(reinterpret_cast<uintptr_t>(e), acc);
-        }
+        } else {
+	if (!(register_internode_version(key))){
+		 return sel_return_type(false,false,0,nullptr);
+	}
         return sel_return_type(true, false, 0, nullptr);
+	}
     }
 
     sel_return_type
@@ -1781,8 +1795,12 @@ public:
             uint8_t* value_res = kv_value_bytes(result);
             auto e = *(internal_elem**)(value_res);
             return select_row(reinterpret_cast<uintptr_t>(e), accesses);
+        } else {
+        if (!(register_internode_version(key))){
+                 return sel_return_type(false,false,0,nullptr);
         }
         return sel_return_type(true, false, 0, nullptr);
+        }
     }
 
     sel_return_type
@@ -2306,6 +2324,16 @@ private:
         }
         return  result != NULL;
     }
+
+        bool register_internode_version(const key_type &key) {
+            cuckoo_trie *ct_pointer = ctIndex;
+            ct_finger *finger;
+            uint64_t bucket;
+            uint32_t version;
+            uint8_t *key_bytes = (uint8_t *) malloc(sizeof(key_type));
+            ct_finger_search(ct_pointer, sizeof(key_type), key_bytes, &version);
+            return static_cast<bool>(version);
+        }
 
     static bool
     access_all(std::array<access_t, value_container_type::num_versions> &cell_accesses,

@@ -28,6 +28,8 @@ EXPORT int ct_update(cuckoo_trie *trie, ct_kv *kv);
 
 EXPORT ct_kv *ct_lookup(cuckoo_trie *trie, uint64_t key_size, uint8_t *key_bytes);
 
+EXPORT void ct_finger_search(cuckoo_trie *trie, uint64_t key_size, uint8_t *key_bytes, uint32_t* version);
+
 EXPORT void ct_iter_goto(ct_iter *iter, uint64_t key_size, uint8_t *key_bytes);
 
 EXPORT ct_kv *ct_iter_next(ct_iter *iter);
